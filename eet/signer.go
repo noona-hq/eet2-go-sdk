@@ -121,6 +121,18 @@ func (s *Signer) EncodePKCS12(password string) ([]byte, error) {
 	return pkcs12.Modern.WithRand(rand.Reader).Encode(key, s.cert, s.chain, password)
 }
 
+func (s *Signer) EncodePEM() ([]byte, error) {
+	der, err := x509.MarshalPKCS8PrivateKey(s.key)
+	if err != nil {
+		return nil, ErrKeyNotExportable
+	}
+	out := pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: s.cert.Raw})
+	for _, c := range s.chain {
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: c.Raw})...)
+	}
+	return append(out, pem.EncodeToMemory(&pem.Block{Type: pemPrivateKey, Bytes: der})...), nil
+}
+
 func (s *Signer) RenewalDue(now time.Time) bool {
 	return !now.Before(s.cert.NotAfter.Add(-RenewalWindow))
 }

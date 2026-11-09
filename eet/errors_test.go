@@ -40,3 +40,28 @@ func TestShouldResend(t *testing.T) {
 		})
 	}
 }
+
+func TestMessageUUID(t *testing.T) {
+	t.Parallel()
+	const uuid = "e23e5a5a-08d7-4a08-844d-2b6c6b60621d"
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "transport error", err: &TransportError{Err: context.DeadlineExceeded, MessageUUID: uuid}, want: uuid},
+		{name: "HTTP error", err: &HTTPError{StatusCode: 503, MessageUUID: uuid}, want: uuid},
+		{name: "SOAP fault", err: &SOAPFault{Code: "soapenv:Server", MessageUUID: uuid}, want: uuid},
+		{name: "rejected message", err: &ResponseError{Code: CodeSchemaViolation, MessageUUID: uuid}, want: uuid},
+		{name: "wrapped", err: fmt.Errorf("register: %w", &TransportError{Err: context.Canceled, MessageUUID: uuid}), want: uuid},
+		{name: "error before sending", err: ErrNoSigner},
+		{name: "no error", err: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := MessageUUID(tc.err); got != tc.want {
+				t.Fatalf("MessageUUID() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

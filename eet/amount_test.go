@@ -65,7 +65,7 @@ func TestParseAmount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := ParseAmount(tc.input)
-			if (err != nil) != tc.wantErr {
+			if (err != nil) != tc.wantErr || (err != nil && !errors.Is(err, ErrInvalidAmount)) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
 			if got != tc.want {
@@ -91,6 +91,39 @@ func TestAmountValid(t *testing.T) {
 			t.Parallel()
 			if err := tc.amount.Valid(); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseDecimal(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		input   string
+		want    Amount
+		wantErr error
+	}{
+		{name: "one decimal", input: "199.9", want: Halers(19990)},
+		{name: "two decimals", input: "199.90", want: Halers(19990)},
+		{name: "whole number", input: "200", want: Crowns(200)},
+		{name: "exponent notation", input: "1.999E+2", want: Halers(19990)},
+		{name: "surrounding spaces", input: " 12.5 ", want: Halers(1250)},
+		{name: "half rounds up", input: "0.005", want: Halers(1)},
+		{name: "below half rounds down", input: "0.0049", want: Halers(0)},
+		{name: "negative half rounds away from zero", input: "-0.005", want: Halers(-1)},
+		{name: "maximum", input: "99999999.99", want: Halers(9999999999)},
+		{name: "out of range", input: "100000000", wantErr: ErrAmountOutOfRange},
+		{name: "not a number", input: "12,50", wantErr: ErrInvalidAmount},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ParseDecimal(tc.input)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Fatalf("ParseDecimal(%q) = %d, want %d", tc.input, got, tc.want)
 			}
 		})
 	}

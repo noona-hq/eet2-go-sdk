@@ -116,3 +116,38 @@ func TestSignerRenewalDue(t *testing.T) {
 		})
 	}
 }
+
+func TestSignerEncodePEM(t *testing.T) {
+	t.Parallel()
+	s := playgroundSigner(t, testEIC)
+	opaque, err := NewSigner(s.Certificate(), opaqueKey{s.Key()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		signer  *Signer
+		wantErr error
+	}{
+		{name: "exportable key with chain", signer: s},
+		{name: "key held by an external signer", signer: opaque, wantErr: ErrKeyNotExportable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			data, err := tc.signer.EncodePEM()
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			back, err := ParsePEM(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !back.Certificate().Equal(s.Certificate()) || len(back.Chain()) != len(s.Chain()) {
+				t.Fatal("PEM does not round-trip")
+			}
+		})
+	}
+}

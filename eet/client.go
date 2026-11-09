@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -31,12 +30,9 @@ type Client struct {
 	logger    *slog.Logger
 }
 
-func NewClient(env Environment, signer *Signer, opts ...Option) (*Client, error) {
+func NewClient(env Environment, opts ...Option) (*Client, error) {
 	if env.URL == "" {
-		return nil, errors.New("eet: environment URL is required")
-	}
-	if signer == nil {
-		return nil, errors.New("eet: signer is required")
+		return nil, ErrNoEnvironmentURL
 	}
 	c := &Client{
 		env:       env,
@@ -44,32 +40,31 @@ func NewClient(env Environment, signer *Signer, opts ...Option) (*Client, error)
 		verify:    true,
 		certCheck: CheckResponseSignerOrganization,
 	}
-	c.signer.Store(signer)
 	for _, opt := range opts {
 		if err := opt(c); err != nil {
 			return nil, err
 		}
 	}
 	if c.http == nil {
-		c.http = &http.Client{Transport: newTransport()}
+		c.http = NewHTTPClient()
 	}
 	return c, nil
 }
 
-func newTransport() *http.Transport {
-	return &http.Transport{
+func NewHTTPClient() *http.Client {
+	return &http.Client{Transport: &http.Transport{
 		Proxy:               http.ProxyFromEnvironment,
 		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 		ForceAttemptHTTP2:   false,
 		TLSNextProto:        map[string]func(string, *tls.Conn) http.RoundTripper{},
 		MaxIdleConnsPerHost: maxIdleConnsPerHost,
 		IdleConnTimeout:     idleConnTimeout,
-	}
+	}}
 }
 
-func (c *Client) WithSigner(s *Signer) (*Client, error) {
+func (c *Client) ForSigner(s *Signer) (*Client, error) {
 	if s == nil {
-		return nil, errors.New("eet: signer is required")
+		return nil, ErrNoSigner
 	}
 	n := &Client{
 		env:       c.env,
@@ -99,11 +94,11 @@ func (c *Client) Environment() Environment {
 
 func (c *Client) Lint(sale Sale) []Warning {
 	now := time.Now()
-	return sale.Lint(LintOptions{
-		Certificate: c.signer.Load().Certificate(),
-		Now:         now,
-		MinSaleTime: c.env.MinSaleTimeAt(now),
-	})
+	opts := LintOptions{Now: now, MinSaleTime: c.env.MinSaleTimeAt(now)}
+	if signer := c.signer.Load(); signer != nil {
+		opts.Certificate = signer.Certificate()
+	}
+	return sale.Lint(opts)
 }
 
 type SendOptions struct {
@@ -116,6 +111,9 @@ func (c *Client) Prepare(sale Sale, opts SendOptions) (*Message, error) {
 		return nil, err
 	}
 	signer := c.signer.Load()
+	if signer == nil {
+		return nil, ErrNoSigner
+	}
 	now := time.Now()
 	if !signer.ValidAt(now) {
 		return nil, ErrCertificateNotValid

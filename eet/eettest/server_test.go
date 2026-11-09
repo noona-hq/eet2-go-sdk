@@ -178,7 +178,7 @@ func TestStart(t *testing.T) {
 func TestServerResponsesAreTrustedOnlyWithClientOptions(t *testing.T) {
 	t.Parallel()
 	srv := eettest.NewServer(t)
-	client, err := eet.NewClient(srv.Environment(), signer(t))
+	client, err := eet.NewClient(srv.Environment(), eet.WithSigner(signer(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

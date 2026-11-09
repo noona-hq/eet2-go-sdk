@@ -149,7 +149,7 @@ func (f *fakeEET) lastRequest(t *testing.T) (*http.Request, []byte) {
 
 func newTestClient(t *testing.T, url string, opts ...Option) *Client {
 	t.Helper()
-	c, err := NewClient(Environment{Name: "test", URL: url}, playgroundSigner(t, testEIC), opts...)
+	c, err := NewClient(Environment{Name: "test", URL: url}, append([]Option{WithSigner(playgroundSigner(t, testEIC))}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}

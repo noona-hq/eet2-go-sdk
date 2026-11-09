@@ -20,7 +20,7 @@ func ExampleNewClient() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	client, err := eet.NewClient(eet.Production, signer, eet.WithTimeout(5*time.Second))
+	client, err := eet.NewClient(eet.Production, eet.WithSigner(signer), eet.WithTimeout(5*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -153,11 +153,14 @@ func ExampleSale_Reversal() {
 	}
 }
 
-func ExampleClient_WithSigner() {
-	var shared *eet.Client
+func ExampleClient_ForSigner() {
+	shared, err := eet.NewClient(eet.Production)
+	if err != nil {
+		log.Fatal(err)
+	}
 	var companySigner *eet.Signer
 
-	client, err := shared.WithSigner(companySigner)
+	client, err := shared.ForSigner(companySigner)
 	if err != nil {
 		log.Fatal(err)
 	}

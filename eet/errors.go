@@ -10,6 +10,9 @@ import (
 )
 
 var (
+	ErrNoSigner             = errors.New("eet: no signer: set one with WithSigner or ForSigner")
+	ErrNoEnvironmentURL     = errors.New("eet: environment URL is required")
+	ErrInvalidAmount        = errors.New("eet: invalid amount")
 	ErrAmountOutOfRange     = errors.New("eet: amount must be greater than -100000000.00 and less than 100000000.00 CZK")
 	ErrNotRSA               = errors.New("eet: the cash register certificate must contain an RSA key")
 	ErrKeyMismatch          = errors.New("eet: private key does not match the certificate")
@@ -128,4 +131,24 @@ func ShouldResend(err error) bool {
 		}
 	}
 	return true
+}
+
+type attemptError interface {
+	error
+	attemptUUID() string
+}
+
+func (e *TransportError) attemptUUID() string { return e.MessageUUID }
+
+func (e *HTTPError) attemptUUID() string { return e.MessageUUID }
+
+func (e *ResponseError) attemptUUID() string { return e.MessageUUID }
+
+func (f *SOAPFault) attemptUUID() string { return f.MessageUUID }
+
+func MessageUUID(err error) string {
+	if a, ok := errors.AsType[attemptError](err); ok {
+		return a.attemptUUID()
+	}
+	return ""
 }

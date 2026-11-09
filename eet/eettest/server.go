@@ -131,7 +131,8 @@ func (s *Server) ClientOptions() []eet.Option {
 }
 
 func (s *Server) NewClient(signer *eet.Signer, opts ...eet.Option) (*eet.Client, error) {
-	return eet.NewClient(s.Environment(), signer, append(s.ClientOptions(), opts...)...)
+	base := append([]eet.Option{eet.WithSigner(signer)}, s.ClientOptions()...)
+	return eet.NewClient(s.Environment(), append(base, opts...)...)
 }
 
 func (s *Server) Enqueue(replies ...Reply) {

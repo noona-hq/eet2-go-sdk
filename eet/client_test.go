@@ -21,27 +21,30 @@ var pokFirstDigitPattern = regexp.MustCompile(`pok="([0-9a-f])`)
 func TestNewClient(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		env     Environment
-		signer  func(*testing.T) *Signer
-		opts    []Option
-		wantErr error
+		name       string
+		env        Environment
+		opts       func(*testing.T) []Option
+		wantErr    error
+		wantSigner string
 	}{
-		{name: "missing environment URL", env: Environment{Name: "empty"}, signer: func(t *testing.T) *Signer { return playgroundSigner(t, testEIC) }, wantErr: errors.New("eet: environment URL is required")},
-		{name: "defaults", signer: func(t *testing.T) *Signer { return playgroundSigner(t, testEIC) }},
-		{name: "legal minimum timeout", signer: func(t *testing.T) *Signer { return playgroundSigner(t, testEIC) }, opts: []Option{WithTimeout(MinTimeout)}},
-		{name: "timeout below legal minimum", signer: func(t *testing.T) *Signer { return playgroundSigner(t, testEIC) }, opts: []Option{WithTimeout(MinTimeout - time.Millisecond)}, wantErr: ErrTimeoutTooShort},
-		{name: "missing signer", signer: func(*testing.T) *Signer { return nil }, wantErr: errors.New("eet: signer is required")},
+		{name: "without signer", env: Playground, opts: func(*testing.T) []Option { return nil }},
+		{name: "with signer", env: Playground, opts: func(t *testing.T) []Option { return []Option{WithSigner(playgroundSigner(t, testEIC))} }, wantSigner: testEIC},
+		{name: "legal minimum timeout", env: Playground, opts: func(*testing.T) []Option { return []Option{WithTimeout(MinTimeout)} }},
+		{name: "missing environment URL", env: Environment{Name: "empty"}, opts: func(*testing.T) []Option { return nil }, wantErr: ErrNoEnvironmentURL},
+		{name: "timeout below legal minimum", env: Playground, opts: func(*testing.T) []Option { return []Option{WithTimeout(MinTimeout - time.Millisecond)} }, wantErr: ErrTimeoutTooShort},
+		{name: "nil signer", env: Playground, opts: func(*testing.T) []Option { return []Option{WithSigner(nil)} }, wantErr: ErrNoSigner},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			env := tc.env
-			if env.Name == "" {
-				env = Playground
-			}
-			_, err := NewClient(env, tc.signer(t), tc.opts...)
-			if (err == nil) != (tc.wantErr == nil) || (err != nil && err.Error() != tc.wantErr.Error()) {
+			c, err := NewClient(tc.env, tc.opts(t)...)
+			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if got := c.Signer(); (got == nil) != (tc.wantSigner == "") || (got != nil && got.EIC() != tc.wantSigner) {
+				t.Fatalf("signer = %v, want %q", got, tc.wantSigner)
 			}
 		})
 	}
@@ -106,10 +109,20 @@ func TestPrepare(t *testing.T) {
 			sale:    testSale,
 			wantErr: ErrCertificateNotValid,
 		},
+		{
+			name:    "no signer",
+			signer:  func(*testing.T) *Signer { return nil },
+			sale:    testSale,
+			wantErr: ErrNoSigner,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c, err := NewClient(Playground, tc.signer(t))
+			var opts []Option
+			if signer := tc.signer(t); signer != nil {
+				opts = append(opts, WithSigner(signer))
+			}
+			c, err := NewClient(Playground, opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -273,6 +286,32 @@ func TestMessageSend(t *testing.T) {
 			answersThisUUID: func(t *testing.T) string { return requestUUID(signedAck(t)) },
 			check: func(t *testing.T, r sendResult) {
 				if !errors.Is(r.err, ErrInvalidSignature) || !strings.Contains(r.err.Error(), "untrusted") {
+					t.Fatalf("err = %v", r.err)
+				}
+			},
+		},
+		{
+			name: "signer organization option accepts the expected signer",
+			response: func(t *testing.T) fakeResponse {
+				return fakeResponse{status: 200, contentType: "text/xml", body: staticBody(signedAck(t))}
+			},
+			opts:            []Option{WithResponseSignerOrganization(ResponseSignerOrganization)},
+			answersThisUUID: func(t *testing.T) string { return requestUUID(signedAck(t)) },
+			check: func(t *testing.T, r sendResult) {
+				if r.err != nil || !r.resp.Signed {
+					t.Fatalf("resp=%+v err=%v", r.resp, r.err)
+				}
+			},
+		},
+		{
+			name: "signer organization option rejects another signer",
+			response: func(t *testing.T) fakeResponse {
+				return fakeResponse{status: 200, contentType: "text/xml", body: staticBody(signedAck(t))}
+			},
+			opts:            []Option{WithResponseSignerOrganization("Another organization")},
+			answersThisUUID: func(t *testing.T) string { return requestUUID(signedAck(t)) },
+			check: func(t *testing.T, r sendResult) {
+				if !errors.Is(r.err, ErrInvalidSignature) {
 					t.Fatalf("err = %v", r.err)
 				}
 			},
@@ -525,7 +564,7 @@ func TestClientLint(t *testing.T) {
 	}
 }
 
-func TestClientWithSigner(t *testing.T) {
+func TestClientForSigner(t *testing.T) {
 	t.Parallel()
 	fake := newFakeEET(t, fakeResponse{status: 200, contentType: "text/xml", body: unsignedOdpoved(`<eet:Odpoved><eet:Hlavicka uuid_zpravy="{uuid}"/><eet:Potvrzeni pok="987a6be5-6af5-44f3-b4fc-987654321000-ff" test="true"/></eet:Odpoved>`)})
 	base := newTestClient(t, fake.srv.URL, WithoutResponseSignatureVerification(), WithTimeout(MinTimeout+time.Second))
@@ -539,7 +578,7 @@ func TestClientWithSigner(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c, err := base.WithSigner(tc.signer(t))
+			c, err := base.ForSigner(tc.signer(t))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -547,7 +586,7 @@ func TestClientWithSigner(t *testing.T) {
 				return
 			}
 			if base.Signer().EIC() != testEIC || c.Signer().EIC() != "CZ683555118" || c.Environment() != base.Environment() || c.http != base.http || c.timeout != base.timeout || c.verify != base.verify {
-				t.Fatal("WithSigner must share configuration and keep the original signer")
+				t.Fatal("ForSigner must share configuration and keep the original signer")
 			}
 			sale := testSale()
 			sale.EIC = "CZ683555118"
