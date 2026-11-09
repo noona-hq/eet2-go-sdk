@@ -158,6 +158,23 @@ func TestServer(t *testing.T) {
 	}
 }
 
+func TestStart(t *testing.T) {
+	t.Parallel()
+	srv, err := eettest.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	client, err := srv.NewClient(signer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Send(context.Background(), sale())
+	if err != nil || !resp.Accepted() || resp.SigningCertificate.Subject.Organization[0] != srv.SignerOrganization() {
+		t.Fatalf("resp=%+v err=%v", resp, err)
+	}
+}
+
 func TestServerResponsesAreTrustedOnlyWithClientOptions(t *testing.T) {
 	t.Parallel()
 	srv := eettest.NewServer(t)

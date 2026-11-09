@@ -145,7 +145,7 @@ company, err := shared.WithSigner(companySigner)
 
 ## Testing your integration
 
-`eettest.NewServer(t)` starts a local EET endpoint that verifies request signatures, records every received sale and signs acknowledgements with its own certificate. `srv.NewClient(signer)` returns a client that trusts it. Script replies with `Enqueue`:
+`eettest.NewServer(t)` (or `eettest.Start()` with `Close()` outside a test, for example in `TestMain`) starts a local EET endpoint that verifies request signatures, records every received sale and signs acknowledgements with its own certificate. `srv.NewClient(signer)` returns a client that trusts it. Script replies with `Enqueue`:
 
 ```go
 srv := eettest.NewServer(t)

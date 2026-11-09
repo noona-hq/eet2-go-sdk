@@ -63,14 +63,30 @@ type Server struct {
 
 func NewServer(tb testing.TB) *Server {
 	tb.Helper()
-	key, cert, err := newSigningCertificate()
+	s, err := Start()
 	if err != nil {
 		tb.Fatalf("eettest: %v", err)
 	}
+	tb.Cleanup(s.Close)
+	return s
+}
+
+func Start() (*Server, error) {
+	key, cert, err := newSigningCertificate()
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{cert: cert, key: key}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.handle))
-	tb.Cleanup(s.srv.Close)
-	return s
+	return s, nil
+}
+
+func (s *Server) Close() {
+	s.srv.Close()
+}
+
+func (s *Server) SignerOrganization() string {
+	return signerName
 }
 
 func newSigningCertificate() (*rsa.PrivateKey, *x509.Certificate, error) {
