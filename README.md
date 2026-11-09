@@ -25,6 +25,7 @@ go get github.com/noona-hq/eet2-go-sdk@latest
 | `github.com/noona-hq/eet2-go-sdk/eet` | Build, sign and send registered sales; parse and verify responses |
 | `github.com/noona-hq/eet2-go-sdk/eet/eettest` | Local EET endpoint for testing an integration |
 | `github.com/noona-hq/eet2-go-sdk/caeet` | Renew cash register certificates through the CA EET API |
+| `github.com/noona-hq/eet2-go-sdk/caeet/caeettest` | Local CA EET API for testing certificate renewal |
 
 ## Usage
 
@@ -35,7 +36,7 @@ import "github.com/noona-hq/eet2-go-sdk/eet"
 ```go
 p12, err := os.ReadFile("cash-register.p12")
 signer, err := eet.LoadPKCS12(p12, password)
-client, err := eet.NewClient(eet.Production, signer)
+client, err := eet.NewClient(eet.Production, eet.WithSigner(signer))
 
 resp, err := client.Send(ctx, eet.Sale{
 	EIC:            "CZ00000019",
@@ -104,7 +105,7 @@ Every attempt gets a new `uuid_zpravy` and `dat_odesl`, while `Data` stays uncha
 | `*SOAPFault`, `*HTTPError` | Technical rejection | Resend later |
 | `ErrInvalidSignature`, `ErrResponseNotSigned` | The acknowledgement could not be verified | The response is returned for inspection; do not treat its POK as confirmed |
 
-`eet.ShouldResend(err)` answers the only question most callers have: keep the sale and `Resend` it later, or give up. It is true for every outcome without a confirmed POK and false for invalid data, rejected messages and an expired certificate. Every error carries the `MessageUUID` of the attempt.
+`eet.ShouldResend(err)` answers the only question most callers have: keep the sale and `Resend` it later, or give up. It is true for every outcome without a confirmed POK and false for invalid data, rejected messages and an expired certificate. Every send error carries the UUID of the attempt; `eet.MessageUUID(err)` returns it from any of them.
 
 Acknowledgements must carry a valid XML signature. Data is read only from the signed SOAP Body.
 
@@ -116,6 +117,10 @@ When `ShouldResend` is true, store the sale and call `Resend` as soon as the cau
 
 `Sale` and `Amount` marshal to JSON and text, so an unconfirmed sale can be stored and loaded unchanged. Amounts are always strings such as `"123.45"`; a JSON number is rejected so that `20` is never read as 20 halers.
 
+Amounts coming from a database or another API convert with `eet.ParseDecimal("199.9")`, which rounds exactly to halers (half away from zero) instead of going through floats.
+
+To check a connection before going live, `client.CheckConnection(ctx, eet.Register{EIC: ..., UnitID: ..., RegisterID: ...})` sends a verification-mode message and returns nil when EET answers with error code 0.
+
 A storno is a new sale with negative amounts, its own sequence number and the time of the refund. It is not linked to the original sale:
 
 ```go
@@ -124,12 +129,16 @@ storno := sale.Reversal(eet.Reversal{Time: refundedAt, SequenceNumber: "2027/000
 
 ## Many taxpayers
 
-Every taxpayer signs with their own certificate. `WithSigner` returns a client for another certificate that shares the environment, options and HTTP connections:
+Every taxpayer signs with their own certificate. Create one client without a signer and derive a client per taxpayer with `ForSigner`. Derived clients share the environment, options and HTTP connections:
 
 ```go
-shared, err := eet.NewClient(eet.Production, anySigner, eet.WithLogger(logger))
-company, err := shared.WithSigner(companySigner)
+shared, err := eet.NewClient(eet.Production, eet.WithLogger(logger))
+company, err := shared.ForSigner(companySigner)
 ```
+
+To use your own `*http.Client`, start from `eet.NewHTTPClient()`, which has the TLS 1.2+ and HTTP/1.1 settings EET requires, and pass it with `WithHTTPClient`.
+
+`WithResponseSignerOrganization(name)` changes the expected organization of the acknowledgement signer, for example when the Financial Administration replaces its signing certificate.
 
 `WithLogger(*slog.Logger)` logs one record per attempt with the UUID, taxpayer, unit, register, sequence number, duration, transaction ID, POK, error and whether to resend.
 
@@ -141,6 +150,7 @@ company, err := shared.WithSigner(companySigner)
 | `eet.ParsePEM(data)` | Certificate, chain and PKCS#1 or PKCS#8 key from one PEM blob, for example from a secret store |
 | `eet.NewSigner(cert, key)` | Any `crypto.Signer`, so the key can stay in a KMS or HSM |
 | `Signer.EncodePKCS12(password)` | Re-wrap an exportable key in a modern PKCS#12 for storage |
+| `Signer.EncodePEM()` | Certificate, chain and PKCS#8 key as PEM, the counterpart of `ParsePEM` |
 | `Signer.RenewalDue(now)` | True within `eet.RenewalWindow` (21 days) of expiry |
 
 ## Testing your integration
@@ -152,6 +162,15 @@ srv := eettest.NewServer(t)
 srv.Enqueue(eettest.TemporaryError(), eettest.Accept(), eettest.Unavailable(), eettest.Accept().After(5*time.Second))
 client, err := srv.NewClient(signer)
 received := srv.Requests()
+```
+
+`caeettest.NewServer(t)` does the same for the CA EET API. It authenticates the JWT of certificates passed to `Trust`, runs the request workflow and issues a new `.p12` signed by its own root (`srv.Root()`). Script renewals with `Enqueue(caeettest.Renewal{PollsBeforeIssued: 2})` or `Renewal{RejectReason: "..."}`:
+
+```go
+srv := caeettest.NewServer(t)
+srv.Trust(signer.Certificate())
+ca, err := caeet.New(srv.Environment(), signer)
+bundle, err := ca.RenewCertificate(ctx, store)
 ```
 
 ## Certificate renewal

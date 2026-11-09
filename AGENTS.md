@@ -20,9 +20,10 @@ The implementation follows the official EET 2.0 documents from https://eet.gov.c
 
 | Path | Contents |
 | --- | --- |
-| `eet/` | Public EET client: environments (`environment.go`), data model and validation (`sale.go`, `amount.go`, `datetime.go`, `lint.go`), message header and envelope (`header.go`, `envelope.go`, `signer.go`), sending (`client.go`, `options.go`, `message.go`, `logging.go`), responses and errors (`response.go`, `errors.go`) |
+| `eet/` | Public EET client: environments (`environment.go`), data model and validation (`sale.go`, `amount.go`, `datetime.go`, `lint.go`), message header and envelope (`header.go`, `envelope.go`, `signer.go`), sending (`client.go`, `options.go`, `message.go`, `connection.go`, `logging.go`), responses and errors (`response.go`, `errors.go`) |
 | `eet/eettest/` | Public local EET endpoint for integration tests: `server.go`, scripted replies (`reply.go`), parsed requests (`request.go`) |
 | `caeet/` | Public CA EET API client: `client.go`, `token.go`, `requests.go`, `renew.go`, `errors.go` |
+| `caeet/caeettest/` | Public local CA EET API for integration tests |
 | `internal/wssec/` | WS-Security: signed SOAP envelope (`sign.go`), signature verification (`verify.go`), XML rendering (`xml.go`); knows nothing about EET |
 | `internal/fixtures/` | Embedded test data shared by all packages: official sample requests, shared playground certificates, recorded playground responses |
 | `scripts/` | CI helpers |
@@ -45,7 +46,13 @@ One file has one responsibility. Put new code in the file whose responsibility i
 - Every public function is usable without reading the source: examples in `example_test.go` show each main call and appear on pkg.go.dev.
 - Configuration uses functional options (`WithX`). Environments are values (`eet.Production`, `eet.Playground`, `caeet.Production`), never raw URLs.
 - Errors are typed and carry the attempt's `MessageUUID`; `eet.ShouldResend` decides whether an error means resending.
-- New behaviour that integrators need goes into the public API or `eettest`, never into hooks for the SDK's own tests.
+- New behaviour that integrators need goes into the public API, `eettest` or `caeettest`, never into hooks for the SDK's own tests.
+- Follow Effective Go and the Go Code Review Comments:
+  - functional options;
+  - sentinel errors for `errors.Is` and typed errors for `errors.As`;
+  - error strings lowercase without trailing punctuation;
+  - no stutter (`eet.Client`, not `eet.EETClient`).
+- Breaking API changes are fine before 1.0 but are always marked with `!` in the commit.
 
 ## Tests
 
