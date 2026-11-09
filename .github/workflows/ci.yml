@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to bump when releasing
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: gofmt, go fix, go vet, go mod tidy
+        run: make lint
+
+      - name: govulncheck
+        run: make vulncheck
+
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run unit tests
+        run: make ci-test
+
+      - name: Upload JUnit test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-results
+          path: unit-tests.xml
+          if-no-files-found: ignore
+
+  test-coverage:
+    name: Test Coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run coverage
+        run: make test-coverage
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-html
+          path: coverage.html
+          if-no-files-found: ignore
+
+  push-checks-gate:
+    name: Push Checks Gate
+    if: always() && github.event_name != 'pull_request'
+    needs:
+      - lint
+      - test-unit
+      - test-coverage
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+    steps:
+      - id: gate
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          TEST_UNIT_RESULT: ${{ needs.test-unit.result }}
+          TEST_COVERAGE_RESULT: ${{ needs.test-coverage.result }}
+        run: |
+          ready=true
+
+          for result in "${LINT_RESULT}" "${TEST_UNIT_RESULT}" "${TEST_COVERAGE_RESULT}"; do
+            if [[ "${result}" != "success" ]]; then
+              ready=false
+            fi
+          done
+
+          echo "ready=${ready}" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${ready}" != "true" ]]; then
+            echo "Required push checks did not pass"
+            exit 1
+          fi
+
+  release:
+    name: Release
+    if: github.ref_name == 'main' && needs.push-checks-gate.outputs.ready == 'true'
+    needs: push-checks-gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Determine next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: ./scripts/next-version.sh
+
+      - name: Create GitHub release
+        if: steps.version.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "${VERSION}" \
+            --target "${GITHUB_SHA}" \
+            --title "${VERSION}" \
+            --generate-notes
+
+      - name: Publish to the Go module proxy
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GOPROXY: https://proxy.golang.org
+          GOFLAGS: -mod=mod
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if go list -m "github.com/${GITHUB_REPOSITORY}@${VERSION}"; then
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+          echo "::warning::proxy.golang.org has not indexed ${VERSION} yet; it will on first use"
