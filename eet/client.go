@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -27,6 +28,7 @@ type Client struct {
 	timeout   time.Duration
 	verify    bool
 	certCheck func(*x509.Certificate) error
+	logger    *slog.Logger
 }
 
 func NewClient(env Environment, signer *Signer, opts ...Option) (*Client, error) {
@@ -63,6 +65,22 @@ func newTransport() *http.Transport {
 		MaxIdleConnsPerHost: maxIdleConnsPerHost,
 		IdleConnTimeout:     idleConnTimeout,
 	}
+}
+
+func (c *Client) WithSigner(s *Signer) (*Client, error) {
+	if s == nil {
+		return nil, errors.New("eet: signer is required")
+	}
+	n := &Client{
+		env:       c.env,
+		http:      c.http,
+		timeout:   c.timeout,
+		verify:    c.verify,
+		certCheck: c.certCheck,
+		logger:    c.logger,
+	}
+	n.signer.Store(s)
+	return n, nil
 }
 
 func (c *Client) SetSigner(s *Signer) {

@@ -44,7 +44,13 @@ func (m *Message) Send(ctx context.Context) (*Response, error) {
 	if !m.sent.CompareAndSwap(false, true) {
 		return nil, ErrMessageAlreadySent
 	}
-	c := m.client
+	start := time.Now()
+	resp, err := m.client.post(ctx, m)
+	m.client.logAttempt(attempt{msg: m, resp: resp, err: err, duration: time.Since(start)})
+	return resp, err
+}
+
+func (c *Client) post(ctx context.Context, m *Message) (*Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -57,15 +63,15 @@ func (m *Message) Send(ctx context.Context) (*Response, error) {
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, &TransportError{Err: err, Timeout: isTimeout(err)}
+		return nil, &TransportError{Err: err, Timeout: isTimeout(err), MessageUUID: m.UUID}
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseSize))
 	if err != nil {
-		return nil, &TransportError{Err: err, Timeout: isTimeout(err)}
+		return nil, &TransportError{Err: err, Timeout: isTimeout(err), MessageUUID: m.UUID}
 	}
 	txID := res.Header.Get(TransactionIDHeader)
-	httpErr := &HTTPError{StatusCode: res.StatusCode, Body: preview(raw), TransactionID: txID}
+	httpErr := &HTTPError{StatusCode: res.StatusCode, Body: preview(raw), TransactionID: txID, MessageUUID: m.UUID}
 	if !isXML(res.Header.Get("Content-Type"), raw) {
 		return nil, httpErr
 	}
@@ -79,6 +85,7 @@ func (m *Message) Send(ctx context.Context) (*Response, error) {
 			Detail:        fault.Detail,
 			HTTPStatus:    res.StatusCode,
 			TransactionID: txID,
+			MessageUUID:   m.UUID,
 		}
 	}
 	if resp == nil && res.StatusCode != http.StatusOK {
@@ -91,6 +98,7 @@ func (m *Message) Send(ctx context.Context) (*Response, error) {
 	resp.Raw = raw
 	if resp.Error != nil {
 		resp.Error.TransactionID = txID
+		resp.Error.MessageUUID = m.UUID
 	}
 	if err != nil {
 		return resp, err

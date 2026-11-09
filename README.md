@@ -23,6 +23,7 @@ go get github.com/noona-hq/eet2-go-sdk@latest
 | Package | Purpose |
 | --- | --- |
 | `github.com/noona-hq/eet2-go-sdk/eet` | Build, sign and send registered sales; parse and verify responses |
+| `github.com/noona-hq/eet2-go-sdk/eet/eettest` | Local EET endpoint for testing an integration |
 | `github.com/noona-hq/eet2-go-sdk/caeet` | Renew cash register certificates through the CA EET API |
 
 ## Usage
@@ -103,9 +104,55 @@ Every attempt gets a new `uuid_zpravy` and `dat_odesl`, while `Data` stays uncha
 | `*SOAPFault`, `*HTTPError` | Technical rejection | Resend later |
 | `ErrInvalidSignature`, `ErrResponseNotSigned` | The acknowledgement could not be verified | The response is returned for inspection; do not treat its POK as confirmed |
 
+`eet.ShouldResend(err)` answers the only question most callers have: keep the sale and `Resend` it later, or give up. It is true for every outcome without a confirmed POK and false for invalid data, rejected messages and an expired certificate. Every error carries the `MessageUUID` of the attempt.
+
 Acknowledgements must carry a valid XML signature. Data is read only from the signed SOAP Body.
 
 By default the signer's `O` must be `Generální finanční ředitelství`. To also verify the certificate chain up to I.CA, use `WithResponseTrust`.
+
+## Resending and storno
+
+When `ShouldResend` is true, store the sale and call `Resend` as soon as the cause is gone. The law requires it within 48 hours of the sale (`Sale.ResendDeadline()`), and the obligation continues after that.
+
+`Sale` and `Amount` marshal to JSON and text, so an unconfirmed sale can be stored and loaded unchanged. Amounts are always strings such as `"123.45"`; a JSON number is rejected so that `20` is never read as 20 halers.
+
+A storno is a new sale with negative amounts, its own sequence number and the time of the refund. It is not linked to the original sale:
+
+```go
+storno := sale.Reversal(eet.Reversal{Time: refundedAt, SequenceNumber: "2027/000124"})
+```
+
+## Many taxpayers
+
+Every taxpayer signs with their own certificate. `WithSigner` returns a client for another certificate that shares the environment, options and HTTP connections:
+
+```go
+shared, err := eet.NewClient(eet.Production, anySigner, eet.WithLogger(logger))
+company, err := shared.WithSigner(companySigner)
+```
+
+`WithLogger(*slog.Logger)` logs one record per attempt with the UUID, taxpayer, unit, register, sequence number, duration, transaction ID, POK, error and whether to resend.
+
+## Certificates
+
+| Function | Use |
+| --- | --- |
+| `eet.LoadPKCS12(data, password)` | The `.p12` file issued by CA EET, including its legacy 3DES encryption |
+| `eet.ParsePEM(data)` | Certificate, chain and PKCS#1 or PKCS#8 key from one PEM blob, for example from a secret store |
+| `eet.NewSigner(cert, key)` | Any `crypto.Signer`, so the key can stay in a KMS or HSM |
+| `Signer.EncodePKCS12(password)` | Re-wrap an exportable key in a modern PKCS#12 for storage |
+| `Signer.RenewalDue(now)` | True within `eet.RenewalWindow` (21 days) of expiry |
+
+## Testing your integration
+
+`eettest.NewServer(t)` starts a local EET endpoint that verifies request signatures, records every received sale and signs acknowledgements with its own certificate. `srv.NewClient(signer)` returns a client that trusts it. Script replies with `Enqueue`:
+
+```go
+srv := eettest.NewServer(t)
+srv.Enqueue(eettest.TemporaryError(), eettest.Accept(), eettest.Unavailable(), eettest.Accept().After(5*time.Second))
+client, err := srv.NewClient(signer)
+received := srv.Requests()
+```
 
 ## Certificate renewal
 
@@ -121,6 +168,6 @@ client.SetSigner(newSigner)
 1. Authentication uses a JWT signed by the certificate being renewed: RS256 with `x5t#S256`, and `exp - iat` of at most 5 minutes.
 2. The flow is `not-finished` → `renew` → poll `status` → `claim-download` → store → `ack-download`.
 3. The download is acknowledged only after `store` succeeds.
-4. Renew 2–3 weeks before `Signer.NotAfter()`.
+4. Renew when `Signer.RenewalDue(now)` becomes true, three weeks before expiry.
 
 `caeet.Production`, `caeet.Trial` and `caeet.Test` select the CA EET API environment.

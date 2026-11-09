@@ -1,6 +1,7 @@
 package eet
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -68,4 +69,32 @@ func (a Amount) String() string {
 		v = -v
 	}
 	return fmt.Sprintf("%s%d.%02d", sign, v/halersPerCrown, v%halersPerCrown)
+}
+
+func (a Amount) MarshalText() ([]byte, error) {
+	if err := a.Valid(); err != nil {
+		return nil, err
+	}
+	return []byte(a.String()), nil
+}
+
+func (a *Amount) UnmarshalText(text []byte) error {
+	v, err := ParseAmount(string(text))
+	if err != nil {
+		return err
+	}
+	*a = v
+	return nil
+}
+
+func (a *Amount) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("eet: amount must be a JSON string such as \"123.45\": %w", err)
+	}
+	return a.UnmarshalText([]byte(s))
+}
+
+func (a Amount) Neg() Amount {
+	return -a
 }

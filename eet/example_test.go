@@ -132,3 +132,48 @@ func ExampleParseAmount() {
 	}
 	fmt.Println(a.Halers(), a)
 }
+
+func ExampleShouldResend() {
+	var client *eet.Client
+	var sale eet.Sale
+
+	_, err := client.Send(context.Background(), sale)
+	if eet.ShouldResend(err) {
+		log.Printf("keep %s queued and call Resend before %s", sale.Key(), sale.ResendDeadline())
+	}
+}
+
+func ExampleSale_Reversal() {
+	var client *eet.Client
+	var original eet.Sale
+
+	storno := original.Reversal(eet.Reversal{Time: time.Now(), SequenceNumber: "2027/000124"})
+	if _, err := client.Send(context.Background(), storno); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func ExampleClient_WithSigner() {
+	var shared *eet.Client
+	var companySigner *eet.Signer
+
+	client, err := shared.WithSigner(companySigner)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(client.Signer().EIC())
+}
+
+func ExampleParsePEM() {
+	pemData, err := os.ReadFile("cash-register.pem")
+	if err != nil {
+		log.Fatal(err)
+	}
+	signer, err := eet.ParsePEM(pemData)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if signer.RenewalDue(time.Now()) {
+		log.Printf("renew the certificate of %s before %s", signer.EIC(), signer.NotAfter())
+	}
+}

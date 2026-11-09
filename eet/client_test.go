@@ -386,7 +386,7 @@ func TestMessageSend(t *testing.T) {
 			},
 			check: func(t *testing.T, r sendResult) {
 				f, ok := errors.AsType[*SOAPFault](r.err)
-				if !ok || f.Code != "soapenv:Client" || f.String != "Rejected" || f.HTTPStatus != 500 || f.TransactionID != fakeTransaction {
+				if !ok || f.Code != "soapenv:Client" || f.String != "Rejected" || f.HTTPStatus != 500 || f.TransactionID != fakeTransaction || f.MessageUUID != r.msg.UUID {
 					t.Fatalf("err = %#v", r.err)
 				}
 			},
@@ -398,7 +398,7 @@ func TestMessageSend(t *testing.T) {
 			},
 			check: func(t *testing.T, r sendResult) {
 				h, ok := errors.AsType[*HTTPError](r.err)
-				if !ok || h.StatusCode != 503 || h.Body != "<html>down</html>" || h.TransactionID != fakeTransaction {
+				if !ok || h.StatusCode != 503 || h.Body != "<html>down</html>" || h.TransactionID != fakeTransaction || h.MessageUUID != r.msg.UUID {
 					t.Fatalf("err = %#v", r.err)
 				}
 			},
@@ -422,7 +422,7 @@ func TestMessageSend(t *testing.T) {
 			opts: []Option{WithTimeout(MinTimeout)},
 			check: func(t *testing.T, r sendResult) {
 				te, ok := errors.AsType[*TransportError](r.err)
-				if !ok || !te.Timeout {
+				if !ok || !te.Timeout || te.MessageUUID != r.msg.UUID {
 					t.Fatalf("err = %#v", r.err)
 				}
 			},
@@ -520,6 +520,39 @@ func TestClientLint(t *testing.T) {
 			}
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("warnings = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClientWithSigner(t *testing.T) {
+	t.Parallel()
+	fake := newFakeEET(t, fakeResponse{status: 200, contentType: "text/xml", body: unsignedOdpoved(`<eet:Odpoved><eet:Hlavicka uuid_zpravy="{uuid}"/><eet:Potvrzeni pok="987a6be5-6af5-44f3-b4fc-987654321000-ff" test="true"/></eet:Odpoved>`)})
+	base := newTestClient(t, fake.srv.URL, WithoutResponseSignatureVerification(), WithTimeout(MinTimeout+time.Second))
+	for _, tc := range []struct {
+		name    string
+		signer  func(*testing.T) *Signer
+		wantErr bool
+	}{
+		{name: "another taxpayer", signer: func(t *testing.T) *Signer { return playgroundSigner(t, "CZ683555118") }},
+		{name: "missing signer", signer: func(*testing.T) *Signer { return nil }, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := base.WithSigner(tc.signer(t))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if base.Signer().EIC() != testEIC || c.Signer().EIC() != "CZ683555118" || c.Environment() != base.Environment() || c.http != base.http || c.timeout != base.timeout || c.verify != base.verify {
+				t.Fatal("WithSigner must share configuration and keep the original signer")
+			}
+			sale := testSale()
+			sale.EIC = "CZ683555118"
+			if _, err := c.Send(context.Background(), sale); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

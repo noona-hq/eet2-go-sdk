@@ -14,6 +14,7 @@ var (
 	ErrNotRSA               = errors.New("eet: the cash register certificate must contain an RSA key")
 	ErrKeyMismatch          = errors.New("eet: private key does not match the certificate")
 	ErrIncorrectPassword    = errors.New("eet: incorrect PKCS#12 password")
+	ErrKeyNotExportable     = errors.New("eet: private key cannot be exported")
 	ErrInvalidResponse      = errors.New("eet: invalid response")
 	ErrUnsigned             = wssec.ErrUnsigned
 	ErrInvalidSignature     = wssec.ErrInvalidSignature
@@ -53,8 +54,9 @@ func (e ValidationErrors) Unwrap() []error {
 }
 
 type TransportError struct {
-	Err     error
-	Timeout bool
+	Err         error
+	Timeout     bool
+	MessageUUID string
 }
 
 func (e *TransportError) Error() string {
@@ -72,6 +74,7 @@ type HTTPError struct {
 	StatusCode    int
 	Body          string
 	TransactionID string
+	MessageUUID   string
 }
 
 func (e *HTTPError) Error() string {
@@ -102,8 +105,27 @@ type SOAPFault struct {
 	Detail        string
 	HTTPStatus    int
 	TransactionID string
+	MessageUUID   string
 }
 
 func (f *SOAPFault) Error() string {
 	return fmt.Sprintf("eet: SOAP fault %s: %s", f.Code, f.String)
+}
+
+func ShouldResend(err error) bool {
+	if err == nil {
+		return false
+	}
+	if re, ok := errors.AsType[*ResponseError](err); ok {
+		return re.Temporary()
+	}
+	if _, ok := errors.AsType[*ValidationError](err); ok {
+		return false
+	}
+	for _, permanent := range []error{ErrCertificateNotValid, ErrMessageTooLarge, ErrMessageAlreadySent} {
+		if errors.Is(err, permanent) {
+			return false
+		}
+	}
+	return true
 }

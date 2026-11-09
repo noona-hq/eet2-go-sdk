@@ -7,7 +7,6 @@ import (
 )
 
 const (
-	RecommendedRenewal  = 21 * 24 * time.Hour
 	defaultPollInterval = 2 * time.Second
 )
 

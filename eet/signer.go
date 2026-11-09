@@ -2,13 +2,23 @@ package eet
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"time"
 
 	"software.sslmate.com/src/go-pkcs12"
+)
+
+const (
+	RenewalWindow = 21 * 24 * time.Hour
+
+	pemCertificate   = "CERTIFICATE"
+	pemPrivateKey    = "PRIVATE KEY"
+	pemRSAPrivateKey = "RSA PRIVATE KEY"
 )
 
 type Signer struct {
@@ -48,6 +58,71 @@ func LoadPKCS12(data []byte, password string) (*Signer, error) {
 		return nil, ErrNotRSA
 	}
 	return NewSigner(cert, signer, chain...)
+}
+
+func ParsePEM(data []byte) (*Signer, error) {
+	var (
+		leaf  *x509.Certificate
+		chain []*x509.Certificate
+		key   crypto.Signer
+	)
+	for rest := data; ; {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		rest = next
+		switch block.Type {
+		case pemCertificate:
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("eet: parsing certificate: %w", err)
+			}
+			if leaf == nil {
+				leaf = cert
+			} else {
+				chain = append(chain, cert)
+			}
+		case pemPrivateKey, pemRSAPrivateKey:
+			k, err := parsePrivateKey(block)
+			if err != nil {
+				return nil, err
+			}
+			key = k
+		}
+	}
+	return NewSigner(leaf, key, chain...)
+}
+
+func parsePrivateKey(block *pem.Block) (crypto.Signer, error) {
+	if block.Type == pemRSAPrivateKey {
+		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("eet: parsing RSA private key: %w", err)
+		}
+		return key, nil
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("eet: parsing private key: %w", err)
+	}
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, ErrNotRSA
+	}
+	return signer, nil
+}
+
+func (s *Signer) EncodePKCS12(password string) ([]byte, error) {
+	key, ok := s.key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, ErrKeyNotExportable
+	}
+	return pkcs12.Modern.WithRand(rand.Reader).Encode(key, s.cert, s.chain, password)
+}
+
+func (s *Signer) RenewalDue(now time.Time) bool {
+	return !now.Before(s.cert.NotAfter.Add(-RenewalWindow))
 }
 
 func (s *Signer) Certificate() *x509.Certificate {

@@ -20,7 +20,8 @@ The implementation follows the official EET 2.0 documents from https://eet.gov.c
 
 | Path | Contents |
 | --- | --- |
-| `eet/` | Public EET client: data model and validation (`sale.go`, `amount.go`, `datetime.go`, `lint.go`), message header and envelope (`header.go`, `envelope.go`, `signer.go`), sending (`client.go`, `options.go`, `message.go`), responses and errors (`response.go`, `errors.go`) |
+| `eet/` | Public EET client: environments (`environment.go`), data model and validation (`sale.go`, `amount.go`, `datetime.go`, `lint.go`), message header and envelope (`header.go`, `envelope.go`, `signer.go`), sending (`client.go`, `options.go`, `message.go`, `logging.go`), responses and errors (`response.go`, `errors.go`) |
+| `eet/eettest/` | Public local EET endpoint for integration tests: `server.go`, scripted replies (`reply.go`), parsed requests (`request.go`) |
 | `caeet/` | Public CA EET API client: `client.go`, `token.go`, `requests.go`, `renew.go`, `errors.go` |
 | `internal/wssec/` | WS-Security: signed SOAP envelope (`sign.go`), signature verification (`verify.go`), XML rendering (`xml.go`); knows nothing about EET |
 | `internal/fixtures/` | Embedded test data shared by all packages: official sample requests, shared playground certificates, recorded playground responses |
@@ -38,6 +39,13 @@ One file has one responsibility. Put new code in the file whose responsibility i
 - No test-only code paths in the library: no package-level variables or options that exist only so tests can inject fakes.
 - The request envelope must stay byte-for-byte identical to the official samples; `TestBuildEnvelope` enforces this.
 - Response data is read only from the signed SOAP Body.
+
+## API design
+
+- Every public function is usable without reading the source: examples in `example_test.go` show each main call and appear on pkg.go.dev.
+- Configuration uses functional options (`WithX`). Environments are values (`eet.Production`, `eet.Playground`, `caeet.Production`), never raw URLs.
+- Errors are typed and carry the attempt's `MessageUUID`; `eet.ShouldResend` decides whether an error means resending.
+- New behaviour that integrators need goes into the public API or `eettest`, never into hooks for the SDK's own tests.
 
 ## Tests
 

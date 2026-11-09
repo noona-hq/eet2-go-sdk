@@ -14,6 +14,8 @@ const (
 	MinUnitID = 1
 	MaxUnitID = 999_999_999
 
+	ResendPeriod = 48 * time.Hour
+
 	keySeparator = "|"
 )
 
@@ -24,16 +26,39 @@ var (
 )
 
 type Sale struct {
-	EIC               string
-	DelegatingEIC     string
-	MultipleTaxpayers bool
-	UnitID            int
-	RegisterID        string
-	SequenceNumber    string
-	Time              time.Time
-	Total             Amount
-	TopUp             *Amount
-	Drawdown          *Amount
+	EIC               string    `json:"eic"`
+	DelegatingEIC     string    `json:"delegatingEic,omitempty"`
+	MultipleTaxpayers bool      `json:"multipleTaxpayers,omitempty"`
+	UnitID            int       `json:"unitId"`
+	RegisterID        string    `json:"registerId"`
+	SequenceNumber    string    `json:"sequenceNumber"`
+	Time              time.Time `json:"time"`
+	Total             Amount    `json:"total"`
+	TopUp             *Amount   `json:"topUp,omitempty"`
+	Drawdown          *Amount   `json:"drawdown,omitempty"`
+}
+
+type Reversal struct {
+	Time           time.Time
+	SequenceNumber string
+}
+
+func (s Sale) Reversal(r Reversal) Sale {
+	reversed := s
+	reversed.Time = r.Time
+	reversed.SequenceNumber = r.SequenceNumber
+	reversed.Total = s.Total.Neg()
+	if s.TopUp != nil {
+		reversed.TopUp = new(s.TopUp.Neg())
+	}
+	if s.Drawdown != nil {
+		reversed.Drawdown = new(s.Drawdown.Neg())
+	}
+	return reversed
+}
+
+func (s Sale) ResendDeadline() time.Time {
+	return s.Time.Add(ResendPeriod)
 }
 
 func (s Sale) Validate() error {
