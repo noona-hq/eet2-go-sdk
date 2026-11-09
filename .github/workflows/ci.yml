@@ -8,13 +8,14 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: Version part to bump when releasing
+        description: Version part to bump when releasing; auto derives it from Conventional Commits
         type: choice
         options:
+          - auto
           - patch
           - minor
           - major
-        default: patch
+        default: auto
 
 permissions:
   contents: read
@@ -151,7 +152,7 @@ jobs:
       - name: Determine next version
         id: version
         env:
-          BUMP: ${{ inputs.bump || 'patch' }}
+          BUMP: ${{ inputs.bump || 'auto' }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' }}
         run: ./scripts/next-version.sh
 

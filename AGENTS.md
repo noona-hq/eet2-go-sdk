@@ -86,12 +86,29 @@ make test-playground
 
 `make lint` runs gofmt, `go fix -diff`, `go vet` and `go mod tidy -diff`, with and without the `playground` tag. It must pass before every push.
 
+## Commits
+
+Every commit follows [Conventional Commits](https://www.conventionalcommits.org/):
+
+```text
+<type>(<optional scope>)<optional !>: <imperative, lowercase subject>
+```
+
+- Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`, `style`, `revert`.
+- Scopes, when useful, name the package: `eet`, `caeet`, `eettest`, `caeettest`, `wssec`.
+- A breaking change to the public API adds `!` after the type or scope, or a `BREAKING CHANGE:` footer.
+- No trailers such as `Co-Authored-By`.
+
 ## CI and releases
 
-- `.github/workflows/ci.yml` runs lint, govulncheck, unit tests with `-race` and coverage on pull requests and pushes to `main`.
-- After all checks pass on `main`, the release job tags the next patch version with `scripts/next-version.sh`, creates a GitHub Release with generated notes and fetches the version through `proxy.golang.org`.
+- `.github/workflows/ci.yml` runs on pull requests and pushes to `main`: lint, govulncheck, unit tests with `-race`, and coverage.
+- After all checks pass on `main`, the release job tags the next version with `scripts/next-version.sh`, creates a GitHub Release with generated notes and fetches the version through `proxy.golang.org`.
+- The version comes from the commits since the last tag:
+  - a breaking change gives major, or minor while the version is below 1.0;
+  - `feat` gives minor;
+  - anything else gives patch.
 - Pushes that change no Go code (`*.go`, `go.mod`, `go.sum`) are not released.
-- Run the CI workflow manually and choose `minor` or `major` to release a bigger version.
+- Run the CI workflow manually to override the bump. Choosing `major` there is the way to release `v1.0.0`.
 - Never move or delete a published tag: the Go checksum database has recorded it.
 - `.github/workflows/playground.yml` runs the live playground suite weekly and on demand. It is not a required check, because the playground has a maintenance window on Thursdays from 20:00 to 06:00.
 - Dependabot keeps Go modules and GitHub Actions up to date.
